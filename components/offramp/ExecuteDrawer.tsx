@@ -5,7 +5,9 @@ import { initiateWithdraw, getWithdrawTransactionRecord } from '@/lib/stellar/se
 import { getResolvedAnchorById } from '@/lib/stellar/anchors';
 import { buildWithdrawPayment, signAndSubmitPayment } from '@/lib/stellar/horizon';
 import type { AnchorRate, ExecuteDrawerStep } from '@/types';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { KycIframe } from './KycIframe';
+import { FLAGS } from '@/lib/flags';
 
 // ─── Step definitions ─────────────────────────────────────────────────────────
 
@@ -34,6 +36,41 @@ interface ExecuteDrawerProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ExecuteDrawer({
+  rate,
+  amount,
+  publicKey,
+  onClose,
+  onExecuteStarted,
+}: ExecuteDrawerProps) {
+  const resetKey = rate ? `${rate.anchorId}:${amount}:${publicKey}` : 'closed';
+
+  return (
+    <ErrorBoundary
+      resetKeys={[resetKey]}
+      fallback={({ resetErrorBoundary }) => (
+        <ExecuteDrawerErrorFallback
+          anchorName={rate?.anchorName}
+          isOpen={rate !== null}
+          onChooseDifferentAnchor={() => {
+            resetErrorBoundary();
+            onClose();
+          }}
+          onRetry={resetErrorBoundary}
+        />
+      )}
+    >
+      <ExecuteDrawerContent
+        rate={rate}
+        amount={amount}
+        publicKey={publicKey}
+        onClose={onClose}
+        onExecuteStarted={onExecuteStarted}
+      />
+    </ErrorBoundary>
+  );
+}
+
+function ExecuteDrawerContent({
   rate,
   amount,
   publicKey,
@@ -95,13 +132,17 @@ export function ExecuteDrawer({
 
       // Step 2 — Initiate SEP-24 withdraw
       setStep('initiating');
-      const withdrawResp = await initiateWithdraw(anchor, {
-        assetCode: anchor.assetCode,
-        assetIssuer: anchor.assetIssuer,
-        amount,
-        account: publicKey,
-        jwt: auth.jwt,
-      }, signal);
+      const withdrawResp = await initiateWithdraw(
+        anchor,
+        {
+          assetCode: anchor.assetCode,
+          assetIssuer: anchor.assetIssuer,
+          amount,
+          account: publicKey,
+          jwt: auth.jwt,
+        },
+        signal
+      );
 
       // Step 3 — KYC iframe
       setStep('kyc');
@@ -122,7 +163,12 @@ export function ExecuteDrawer({
       // Step 4 — Fetch transaction record
       setStep('building');
       const transferServer = anchor.TRANSFER_SERVER_SEP0024!;
-      const record = await getWithdrawTransactionRecord(transferServer, transactionId, auth.jwt, signal);
+      const record = await getWithdrawTransactionRecord(
+        transferServer,
+        transactionId,
+        auth.jwt,
+        signal
+      );
 
       // Step 5 — Build payment
       const tx = await buildWithdrawPayment({
@@ -289,12 +335,19 @@ export function ExecuteDrawer({
           {step !== 'kyc' && (
             <div className="mt-5">
               {step === 'idle' && (
-                <button
-                  onClick={handleExecute}
-                  className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                >
-                  Start Off-ramp
-                </button>
+                <div className="flex flex-col items-center">
+                  <button
+                    onClick={handleExecute}
+                    className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  >
+                    {FLAGS.INTENT_FLOW ? 'Sign intent' : 'Start Off-ramp'}
+                  </button>
+                  {FLAGS.INTENT_FLOW && (
+                    <p className="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
+                      One signature, any outcome.
+                    </p>
+                  )}
+                </div>
               )}
               {isRunning && (
                 <button
@@ -355,6 +408,57 @@ export function ExecuteDrawer({
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+function ExecuteDrawerErrorFallback({
+  anchorName,
+  isOpen,
+  onChooseDifferentAnchor,
+  onRetry,
+}: {
+  anchorName: string | undefined;
+  isOpen: boolean;
+  onChooseDifferentAnchor: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <>
+      {isOpen && <div className="fixed inset-0 z-40 bg-black/40" aria-hidden="true" />}
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Off-ramp error"
+        className={`fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl bg-white shadow-2xl transition-transform duration-300 dark:bg-gray-900 sm:bottom-auto sm:left-auto sm:right-8 sm:top-1/2 sm:w-96 sm:-translate-y-1/2 sm:rounded-2xl ${
+          isOpen ? 'translate-y-0' : 'translate-y-full sm:translate-y-full'
+        }`}
+      >
+        <div className="p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            Off-ramp unavailable
+          </h2>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+            We could not render the {anchorName ? `${anchorName} ` : ''}off-ramp flow.
+          </p>
+
+          <div className="mt-5 space-y-3">
+            <button
+              onClick={onRetry}
+              className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              Retry
+            </button>
+            <button
+              onClick={onChooseDifferentAnchor}
+              className="w-full rounded-xl bg-gray-100 py-3 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+            >
+              Choose different anchor
+            </button>
+          </div>
+        </div>
+      </div>
     </>
   );
 }
