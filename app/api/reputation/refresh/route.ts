@@ -13,9 +13,7 @@ export async function POST(): Promise<NextResponse> {
 
   try {
     lastRefreshAt = new Date();
-    // Intentional diagnostic log for server-side monitoring
-    // eslint-disable-next-line no-console
-    console.info(`[reputation] aggregate refresh completed at ${lastRefreshAt.toISOString()}`);
+    console.info(`[reputation] aggregate refresh completed at ${lastRefreshAt.toISOString()}`); // eslint-disable-line no-console
 
     return NextResponse.json({
       ok: true,
